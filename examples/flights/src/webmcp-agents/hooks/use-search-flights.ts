@@ -104,11 +104,6 @@ export function useSearchFlights(initial?: FlightQuery) {
     inputSchema: schema,
     readOnly: true,
     execute: search,
-    // chat restore: drop the search and go home
-    revert: () => {
-      booking.clearSearch();
-      navigate("/");
-    },
   });
 
   return {

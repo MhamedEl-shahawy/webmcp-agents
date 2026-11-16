@@ -14,7 +14,4 @@ export const closeCart = defineWebTool({
     ui.closeCart();
     return "Closed the cart.";
   },
-  revert: () => {
-    ui.openCart();
-  },
 });
