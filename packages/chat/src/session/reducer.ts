@@ -29,6 +29,8 @@ export type SessionAction =
   | { type: "part"; part: AgentStreamPart; within?: string }
   /** A core agent event about a running tool, matched by tool name (calls run one at a time). */
   | { type: "toolPhase"; name: string; state: "running" | "awaiting-confirmation"; prompt?: string }
+  /** The done call `id` was confirm-gated or destructive: the chat never restores to before it (`canRestoreTo`). */
+  | { type: "committed"; id: string }
   | { type: "stop" }
   /** Run again from the interrupted turn's last finished tool call (see `resumable`); what came after it goes. */
   | { type: "retry" }
@@ -53,6 +55,17 @@ export function allToolParts(messages: readonly AgentMessage[]): ToolPart[] {
     }
   }
   return out;
+}
+
+/**
+ * Whether the chat can restore to before the user message `messageId`: something comes after it, and nothing from it
+ * on is a confirmed action (a `committed` call: an order placed, a flight booked). Once the person confirmed something
+ * irreversible, no turn before it can be rewound. The chat UI and `session.restore` both ask this.
+ */
+export function canRestoreTo(messages: readonly AgentMessage[], messageId: string): boolean {
+  const idx = messages.findIndex((m) => m.id === messageId && m.role === "user");
+  if (idx === -1 || idx === messages.length - 1) return false;
+  return !allToolParts(messages.slice(idx)).some((p) => p.state === "done" && p.committed);
 }
 
 /** Replace the tool part(s) matching `match` in every message, nested sub-agent runs included. */
@@ -221,6 +234,14 @@ export function sessionReducer(state: SessionState, action: SessionAction): Sess
           () => ({ state: action.state, prompt: action.prompt }),
         ),
       };
+    }
+    case "committed": {
+      const messages = updateTools(
+        state.messages,
+        (p) => p.id === action.id && p.state === "done" && !p.committed,
+        () => ({ committed: true }),
+      );
+      return messages === state.messages ? state : { ...state, messages };
     }
     case "stop":
       return { ...state, status: "idle", messages: cancelOpen(state.messages) };

@@ -3,6 +3,7 @@ import {
   AppSnapshotStore,
   applyUrl,
   clearAppSnapshots,
+  historySettled,
   loadAppSnapshots,
   reapplyCheckpoint,
   saveAppSnapshots,
@@ -50,10 +51,10 @@ describe("restore-snapshot", () => {
     expect(loadAppSnapshots(key).get("u1")).toBeUndefined();
   });
 
-  it("applyUrl pushStates when the path differs", () => {
+  it("applyUrl replaces the history entry when the path differs (no new entry)", () => {
     const push = vi.fn();
     vi.stubGlobal("location", { pathname: "/", search: "", hash: "" });
-    vi.stubGlobal("history", { state: null, pushState: push });
+    vi.stubGlobal("history", { state: null, replaceState: push });
     const unique = `/wa-restore-${Date.now()}?q=1`;
     applyUrl(unique);
     expect(push).toHaveBeenCalledWith(null, "", unique);
@@ -71,5 +72,32 @@ describe("restore-snapshot", () => {
     expect(await reapplyCheckpoint({ url: "/a", app: { n: 1 } }, apply)).toBe(true);
     expect(apply).toHaveBeenCalledWith({ url: "/a", app: { n: 1 } });
     expect(await reapplyCheckpoint({})).toBe(false);
+  });
+
+  it("historySettled resolves on the next popstate (a revert's history.back) or after a short timeout", async () => {
+    const win = new EventTarget();
+    vi.stubGlobal("addEventListener", win.addEventListener.bind(win));
+    vi.stubGlobal("removeEventListener", win.removeEventListener.bind(win));
+    vi.useFakeTimers();
+    try {
+      let settled = false;
+      void historySettled().then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(settled).toBe(false);
+      win.dispatchEvent(new Event("popstate"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(true);
+
+      let timedOut = false;
+      void historySettled().then(() => {
+        timedOut = true;
+      });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(timedOut).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -4,13 +4,7 @@
  * Controls are live DOM nodes — not kept in sessionStorage; after a reload, fill
  * reverse is skipped and only tool `revert` (when present) still runs.
  */
-import {
-  type FieldControl,
-  type FieldValue,
-  getRegisteredWebTool,
-  onAgentEvent,
-  writeControl,
-} from "@webmcp-agents/core";
+import { type FieldControl, type FieldValue, getRegisteredWebTool, onAgentEvent, writeControl } from "@webmcp-agents/core";
 import type { AgentMessage, AgentPart, ToolOutput } from "../types";
 import { allToolParts } from "./reducer";
 
@@ -98,11 +92,18 @@ export function messageText(message: AgentMessage): string {
     .join("");
 }
 
-/** Done tool parts in `messages` from `beforeId` onward (that user turn and after), document order. */
-export function doneToolsAfter(messages: readonly AgentMessage[], beforeId: string): ToolPart[] {
+/**
+ * Every tool part in `messages` from `beforeId` onward (that user turn and after), document order, whatever its state:
+ * a call cancelled after the cursor typed (Stop, a confirm gate that gave up) still left its fills on the page.
+ */
+export function toolsAfter(messages: readonly AgentMessage[], beforeId: string): ToolPart[] {
   const idx = messages.findIndex((m) => m.id === beforeId);
-  if (idx === -1) return [];
-  return allToolParts(messages.slice(idx)).filter((p) => p.state === "done");
+  return idx === -1 ? [] : allToolParts(messages.slice(idx));
+}
+
+/** Done calls among `parts` with no `revert` on the page: what restore could not undo beyond their fills. */
+export function withoutRevert(parts: readonly ToolPart[]): string[] {
+  return parts.filter((p) => p.state === "done" && !getRegisteredWebTool(p.name)?.revert).map((p) => p.name);
 }
 
 /** Best-effort execute return from an MCP tool result (for `revert`'s `output`). */
@@ -117,7 +118,7 @@ export function outputValue(output?: ToolOutput): unknown {
   }
 }
 
-/** Write prior field values back for completed calls (newest call / newest field first). */
+/** Write prior field values back for `parts`, any state (newest call / newest field first). */
 export function reverseFills(parts: readonly ToolPart[], journal: RestoreJournal): void {
   for (const part of [...parts].reverse()) {
     for (const f of [...journal.fillsFor(part.id)].reverse()) {
@@ -127,8 +128,8 @@ export function reverseFills(parts: readonly ToolPart[], journal: RestoreJournal
 }
 
 /**
- * Reverse page side effects for completed calls newest-first: restore fills, then
- * each tool's optional `revert`. Mutates nothing about the message list.
+ * Reverse page side effects of `parts` newest-first: each call's fills (any state), then, for a done call, its tool's
+ * optional `revert`. Mutates nothing about the message list.
  * Prefer this only when no `applySnapshot` is available; otherwise restore fills and
  * let the checkpoint rehydrate the page (avoids `history.back` fighting `navigate`).
  */
@@ -138,12 +139,9 @@ export async function reverseToolCalls(
 ): Promise<{ reverted: string[]; skipped: string[] }> {
   const reverted: string[] = [];
   const skipped: string[] = [];
-  const newestFirst = [...parts].reverse();
-  for (const part of newestFirst) {
-    const fills = [...journal.fillsFor(part.id)].reverse();
-    for (const f of fills) {
-      if (f.control.isConnected) writeControl(f.control, f.from);
-    }
+  for (const part of [...parts].reverse()) {
+    reverseFills([part], journal);
+    if (part.state !== "done") continue;
     const tool = getRegisteredWebTool(part.name);
     if (!tool?.revert) {
       skipped.push(part.name);

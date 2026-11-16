@@ -18,7 +18,8 @@ export interface ChatRestoreSnapshots {
   getSnapshot?: () => unknown;
   /**
    * Reapply a checkpoint before the thread truncates. Prefer the app's router (`navigate(url)`)
-   * over raw `history` when the URL drives the UI. Called after fills/`revert` so this is the last word.
+   * over raw `history` when the URL drives the UI. Called after fills are rewound, as the last word; with it, no tool
+   * `revert` runs (a revert's `history.back()` would fight the router's `navigate`).
    */
   applySnapshot?: (snapshot: ChatRestoreSnapshot) => void | Promise<void>;
 }
@@ -105,32 +106,55 @@ export function clearAppSnapshots(storageKey: string | false): void {
 }
 
 /**
- * Best-effort URL restore when the host did not pass `applySnapshot`: `history.pushState` + `popstate`.
- * SPA routers that ignore that should pass `applySnapshot` and call their own `navigate`.
+ * Best-effort URL restore when the host did not pass `applySnapshot`: `history.replaceState` + `popstate`, so a
+ * restore adds no history entry. SPA routers that ignore that should pass `applySnapshot` and call their own `navigate`.
  */
 export function applyUrl(url: string): void {
   if (typeof location === "undefined" || typeof history === "undefined") return;
   const current = location.pathname + location.search + location.hash;
   if (current === url) return;
-  history.pushState(history.state, "", url);
+  history.replaceState(history.state, "", url);
   if (typeof dispatchEvent === "function" && typeof PopStateEvent === "function") {
     dispatchEvent(new PopStateEvent("popstate", { state: history.state }));
   }
 }
 
+/** How long to wait for a revert's `history.back()` to land before reading `location`. */
+const POP_WAIT_MS = 300;
+
+/**
+ * Resolves on the next `popstate`, or after `POP_WAIT_MS`. `history.back()` is async: read `location` before it lands
+ * and the URL step navigates from the old page, then the pending pop moves the page somewhere else.
+ */
+export function historySettled(): Promise<void> {
+  if (typeof addEventListener !== "function") return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      removeEventListener("popstate", done);
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(done, POP_WAIT_MS);
+    addEventListener("popstate", done);
+  });
+}
+
 /**
  * Reapply a checkpoint (custom hook or default URL). Returns whether a page checkpoint ran
- * (`applySnapshot` called, or a default URL change).
+ * (`applySnapshot` called, or a default URL change). `afterRevert`: a tool `revert` just ran and may have started a
+ * `history.back()`; the default URL step waits for it first.
  */
 export async function reapplyCheckpoint(
   snapshot: ChatRestoreSnapshot,
   applySnapshot?: ChatRestoreSnapshots["applySnapshot"],
+  { afterRevert = false }: { afterRevert?: boolean } = {},
 ): Promise<boolean> {
   if (applySnapshot) {
     await applySnapshot(snapshot);
     return true;
   }
   if (snapshot.url) {
+    if (afterRevert) await historySettled();
     applyUrl(snapshot.url);
     return true;
   }

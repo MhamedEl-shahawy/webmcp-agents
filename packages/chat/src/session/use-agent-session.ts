@@ -8,7 +8,7 @@
  * sub-agent. A delegate call runs the sub-agent's own loop on the same adapter, right here: its page tools still run
  * under the cursor, and its stream is kept nested under the call, so the chat can show it.
  */
-import { onAgentEvent, whenModelContext } from "@webmcp-agents/core";
+import { getRegisteredWebTool, onAgentEvent, whenModelContext } from "@webmcp-agents/core";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { selectTools, type WebAgent } from "../agent";
 import { newId } from "../shared";
@@ -17,6 +17,7 @@ import type { AdapterStatus, AgentAdapter, AgentMessage, ToolDescriptor } from "
 import { useAdapterStatus } from "./use-adapter-status";
 import {
   allToolParts,
+  canRestoreTo,
   initialSession,
   resumable,
   type SessionError,
@@ -26,20 +27,15 @@ import {
 } from "./reducer";
 import {
   bindRestoreJournal,
-  doneToolsAfter,
   messageText,
   RestoreJournal,
   type RestoreResult,
   reverseFills,
   reverseToolCalls,
+  toolsAfter,
+  withoutRevert,
 } from "./restore-journal";
-import {
-  clearAppSnapshots,
-  type ChatRestoreSnapshots,
-  loadAppSnapshots,
-  reapplyCheckpoint,
-  saveAppSnapshots,
-} from "./restore-snapshot";
+import { clearAppSnapshots, type ChatRestoreSnapshots, loadAppSnapshots, reapplyCheckpoint, saveAppSnapshots } from "./restore-snapshot";
 import { pagePath, runAgent, toolsSettled } from "./run-agent";
 
 /** Options for `useAgentSession`. */
@@ -65,9 +61,11 @@ export interface AgentSession {
   /** Run the interrupted turn again from its last finished tool call (see `resumable`): nothing is done twice. */
   retry(): void;
   /**
-   * Cursor-like restore: stop the run, reverse completed tools after this user message (fills + optional
-   * `revert`), reapply the turn's URL / optional app snapshot, drop that turn and everything after it, and
-   * return the dropped text for the composer.
+   * Cursor-like restore: stop the run, drop that user turn and everything after it, rewind the fills of every call
+   * in it (and, without `applySnapshot`, each done call's optional `revert`), reapply the turn's URL / optional app
+   * snapshot, and return the dropped text for the composer. `undefined` (nothing done) when `canRestoreTo` says no:
+   * nothing comes after the message, or a confirmed action (an order placed, a flight booked) does; or while another
+   * restore is under way. `send` waits for a restore to finish.
    */
   restore(messageId: string): Promise<RestoreResult | undefined>;
   /** Start a new conversation. */
@@ -141,7 +139,11 @@ export function useAgentSession(
 
   // ---------- fill journal + app snapshots (chat restore) ----------
   const journal = useRef(new RestoreJournal());
-  const apps = useRef(loadAppSnapshots(storageKey));
+  // lazy: `useRef(load…)` would read and parse sessionStorage on every render (every streamed part)
+  const [loadedApps] = useState(() => loadAppSnapshots(storageKey));
+  const apps = useRef(loadedApps);
+  /** A restore is rewinding the page: `send` waits for it (else its turn could be cut off, or run on a half-restored page). */
+  const restoring = useRef(false);
   const snapshots = useRef({ getSnapshot, applySnapshot });
   snapshots.current = { getSnapshot, applySnapshot };
   useEffect(() => bindRestoreJournal(journal.current), []);
@@ -173,11 +175,16 @@ export function useAgentSession(
           onPart: (part, within) => {
             if (controller.current !== ctrl) return;
             if (part.type === "tool-call") journal.current.beginCall(part.id, part.name);
-            else if (part.type === "tool-result" || part.type === "tool-error") {
+            /** A confirm-gated or destructive call that finished: the person committed to it (`canRestoreTo`). */
+            let committed: string | undefined;
+            if (part.type === "tool-result" || part.type === "tool-error") {
               const name = allToolParts(latest.current.messages).find((p) => p.id === part.id)?.name;
               if (name) journal.current.endCall(part.id, name);
+              const tool = name && part.type === "tool-result" ? getRegisteredWebTool(name) : undefined;
+              if (tool?.requireConfirmation || tool?.destructive) committed = part.id;
             }
             dispatch({ type: "part", part, within });
+            if (committed) dispatch({ type: "committed", id: committed });
           },
         });
       } finally {
@@ -194,7 +201,7 @@ export function useAgentSession(
   const send = useCallback(
     (text: string) => {
       const trimmed = text.trim();
-      if (!trimmed || latest.current.status === "streaming") return;
+      if (!trimmed || restoring.current || latest.current.status === "streaming") return;
       const id = newId("u");
       const page = pagePath();
       try {
@@ -225,43 +232,49 @@ export function useAgentSession(
 
   const restore = useCallback(
     async (messageId: string): Promise<RestoreResult | undefined> => {
+      // one restore at a time; and never past a confirmed action (an order placed, a flight booked)
+      if (restoring.current) return undefined;
       const { messages } = latest.current;
-      const target = messages.find((m) => m.id === messageId && m.role === "user");
-      if (!target) return undefined;
-      const idx = messages.indexOf(target);
-      // already the empty suffix (nothing at or after this checkpoint to drop)
-      if (idx === -1) return undefined;
-
-      stop();
-
-      const done = doneToolsAfter(messages, messageId);
-      // Snapshot-first when the host provides applySnapshot: only rewind fills, then rehydrate
-      // url+app. Calling tool.revert as well fights SPA routers (history.back vs navigate).
-      const useCheckpoint = Boolean(snapshots.current.applySnapshot);
-      let reverted: string[] = [];
-      let skipped: string[] = [];
-      if (useCheckpoint) {
-        reverseFills(done, journal.current);
-        skipped = done.map((p) => p.name);
-      } else {
-        ({ reverted, skipped } = await reverseToolCalls(done, journal.current));
-      }
-      journal.current.forget(allToolParts(messages.slice(idx)).map((p) => p.id));
-
-      let snapshotApplied = false;
+      if (!canRestoreTo(messages, messageId)) return undefined;
+      const idx = messages.findIndex((m) => m.id === messageId);
+      const target = messages[idx]!;
+      restoring.current = true;
       try {
-        snapshotApplied = await reapplyCheckpoint(
-          { url: target.page, app: apps.current.get(messageId) },
-          snapshots.current.applySnapshot,
-        );
-      } catch (err) {
-        console.error("[web-agents] applySnapshot threw", err);
-      }
-      apps.current.forget(messages.slice(idx).map((m) => m.id));
-      saveAppSnapshots(storageKey, apps.current);
+        stop();
+        // Truncate first: the thread updates at once, and `send` stays shut (`restoring`) until the page is back, so
+        // a message typed meanwhile can't be cut off by this restore or run against a half-restored page.
+        dispatch({ type: "restore", beforeId: messageId });
+        const app = apps.current.get(messageId);
+        apps.current.forget(messages.slice(idx).map((m) => m.id));
+        saveAppSnapshots(storageKey, apps.current);
 
-      dispatch({ type: "restore", beforeId: messageId });
-      return { restoredText: messageText(target), reverted, skipped, snapshotApplied };
+        // Every call's fills (cancelled ones typed too); `revert` only for done calls.
+        const calls = toolsAfter(messages, messageId);
+        // Snapshot-first when the host provides applySnapshot: only rewind fills, then rehydrate
+        // url+app. Calling tool.revert as well fights SPA routers (history.back vs navigate).
+        const applySnapshot = snapshots.current.applySnapshot;
+        let reverted: string[] = [];
+        let skipped: string[];
+        if (applySnapshot) {
+          reverseFills(calls, journal.current);
+          skipped = withoutRevert(calls);
+        } else {
+          ({ reverted, skipped } = await reverseToolCalls(calls, journal.current));
+        }
+        journal.current.forget(calls.map((p) => p.id));
+
+        let snapshotApplied = false;
+        try {
+          snapshotApplied = await reapplyCheckpoint({ url: target.page, app }, applySnapshot, {
+            afterRevert: reverted.length > 0,
+          });
+        } catch (err) {
+          console.error("[web-agents] applySnapshot threw", err);
+        }
+        return { restoredText: messageText(target), reverted, skipped, snapshotApplied };
+      } finally {
+        restoring.current = false;
+      }
     },
     [stop, storageKey],
   );

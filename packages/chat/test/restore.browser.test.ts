@@ -64,6 +64,38 @@ describe("reverseToolCalls", () => {
     expect(skipped).toEqual([]);
   });
 
+  it("rewinds the fills of a cancelled call, but never reverts it", async () => {
+    let reverted = false;
+    const id = uniqueName("cancelled");
+    handles.push(
+      registerWebTool(
+        defineWebTool({
+          id,
+          description: "Gets cancelled.",
+          execute: () => "done",
+          revert: () => {
+            reverted = true;
+          },
+        }),
+      ),
+    );
+    const input = fixture(`<input name="email" value="a@x.dev" />`).querySelector("input")!;
+    writeControl(input, "b@x.dev");
+    const journal = new RestoreJournal();
+    journal.beginCall("c1", id);
+    journal.recordFill(id, { field: "email", from: "a@x.dev", value: "b@x.dev", control: input });
+    journal.endCall("c1", id);
+
+    const { reverted: names, skipped } = await reverseToolCalls(
+      [{ type: "tool", id: "c1", name: id, input: {}, state: "cancelled", error: "cancelled" }],
+      journal,
+    );
+    expect(input.value).toBe("a@x.dev");
+    expect(reverted).toBe(false);
+    expect(names).toEqual([]);
+    expect(skipped).toEqual([]);
+  });
+
   it("skips tools without revert", async () => {
     const id = uniqueName("ro");
     handles.push(

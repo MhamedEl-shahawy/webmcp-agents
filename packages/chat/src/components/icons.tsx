@@ -55,3 +55,15 @@ export const RestoreIcon = () => (
     <path d="M4 9h10a5 5 0 0 1 0 10h-1" />
   </Icon>
 );
+/** Confirm a restore. */
+export const CheckIcon = () => (
+  <Icon size={14}>
+    <path d="m5 12 5 5 9-10" />
+  </Icon>
+);
+/** Cancel a restore (the small sibling of `CloseIcon`). */
+export const CancelIcon = () => (
+  <Icon size={14}>
+    <path d="M6 6l12 12M18 6 6 18" />
+  </Icon>
+);

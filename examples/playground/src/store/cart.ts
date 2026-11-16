@@ -72,17 +72,6 @@ export const cart = {
     });
     return `Added ${qty} × ${product.name} to the cart.`;
   },
-  /** Qty ≤ 0 removes the line. Used by chat restore after add_to_cart. */
-  setQty(sku: string, qty: number): string {
-    const item = state.items.find((i) => i.sku === sku);
-    if (!item) throw new Error(`"${sku}" isn't in the cart.`);
-    if (qty <= 0) {
-      commit({ items: state.items.filter((i) => i.sku !== sku) });
-      return `Removed ${item.name}.`;
-    }
-    commit({ items: state.items.map((i) => (i.sku === sku ? { ...i, qty } : i)) });
-    return `${item.name} quantity is now ${qty}.`;
-  },
   clear(): string {
     commit({ items: [] });
     return "Cart cleared.";
@@ -112,13 +101,13 @@ export const cart = {
   },
 };
 
-/** Serializable cart for chat restore checkpoints (`getSnapshot`). */
-export type CartCheckpoint = Pick<CartState, "items" | "promo" | "orders">;
+/** Serializable cart for chat restore checkpoints (`getSnapshot`). Orders are left out: a placed order is a confirmed action, and the chat never restores past one. */
+export type CartCheckpoint = Pick<CartState, "items" | "promo">;
 
 /** Capture the cart for a chat restore checkpoint. */
 export function exportSnapshot(): CartCheckpoint {
-  const { items, promo, orders } = state;
-  return { items, promo, orders };
+  const { items, promo } = state;
+  return { items, promo };
 }
 
 /** Rehydrate the cart from a chat restore checkpoint (`applySnapshot`). */
@@ -126,6 +115,5 @@ export function importSnapshot(data: CartCheckpoint): void {
   commit({
     items: Array.isArray(data.items) ? data.items : [],
     promo: data.promo ?? null,
-    orders: Array.isArray(data.orders) ? data.orders : [],
   });
 }

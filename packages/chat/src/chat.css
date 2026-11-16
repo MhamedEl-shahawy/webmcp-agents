@@ -480,7 +480,7 @@ html[data-wa-chat-resizing] {
   background: var(--wa-chat-accent);
   color: var(--wa-chat-accent-ink);
 }
-/* Restore checkpoint under the user bubble: always readable at muted color. */
+/* Restore checkpoint under the user bubble: icon-only buttons (their tooltips carry the words), at muted color. */
 .wa-chat__stage {
   display: flex;
   justify-content: flex-end;
@@ -488,38 +488,28 @@ html[data-wa-chat-resizing] {
   gap: 6px;
   margin-top: 2px;
 }
-.wa-chat__stage-confirm {
-  display: grid;
-  gap: 4px;
-  justify-items: end;
-  max-width: 88%;
-}
-.wa-chat__stage-prompt {
-  margin: 0;
-  color: var(--wa-chat-muted);
-  font-size: 12px;
-  line-height: 1.4;
-  text-align: right;
-}
 .wa-chat__stage-actions {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
+/* at least 24px square, so they're easy to hit (WCAG 2.5.8) */
 .wa-chat__stage-ask,
 .wa-chat__stage-go,
 .wa-chat__stage-cancel {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
+  display: inline-grid;
+  place-items: center;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--wa-chat-muted);
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.4;
   cursor: pointer;
 }
 .wa-chat__stage-go {

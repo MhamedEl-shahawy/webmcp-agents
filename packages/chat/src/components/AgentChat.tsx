@@ -140,6 +140,7 @@ export function AgentChat({
   const [draft, setDraft] = useState("");
   const [restoredNote, setRestoredNote] = useState(false);
   const restoredTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const restoring = useRef(false);
 
   // Opening puts the cursor in the composer.
   useEffect(() => {
@@ -169,16 +170,26 @@ export function AgentChat({
   }
 
   async function restore(messageId: string) {
-    const result = await session.restore(messageId);
+    restoring.current = true;
+    let result: Awaited<ReturnType<typeof session.restore>>;
+    try {
+      result = await session.restore(messageId);
+    } finally {
+      restoring.current = false;
+    }
     if (!result) return;
-    setDraft(result.restoredText);
+    // keep a half-written message: the restored text goes first, the draft after it
+    setDraft((current) => (current.trim() ? `${result.restoredText}\n\n${current}` : result.restoredText));
     showRestoredNote();
     inputRef.current?.focus();
   }
 
-  function send(text: string) {
+  /** `false` while a restore is under way: the session won't send, so the composer keeps the text (merged after). */
+  function send(text: string): boolean {
+    if (restoring.current) return false;
     clearRestoredNote();
     session.send(text);
+    return true;
   }
 
   function reset() {

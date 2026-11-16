@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { canRestoreTo } from "../session/reducer";
+import { messageText } from "../session/restore-journal";
 import type { AgentMessage } from "../types";
-import { DownIcon, RestoreIcon } from "./icons";
+import { CancelIcon, CheckIcon, DownIcon, RestoreIcon } from "./icons";
 import { Text } from "./Text";
 import { delegateAnswer, ToolCallCard } from "./ToolCallCard";
 
@@ -23,36 +25,17 @@ function visibleParts(message: AgentMessage): AgentMessage["parts"] {
   });
 }
 
-/** Short label for a restore control (first line of the user message). */
+/** Short label for a restore control (the user message, cut to fit an accessible name). */
 function stageLabel(message: AgentMessage): string {
-  const text = message.parts
-    .filter((p): p is Extract<AgentMessage["parts"][number], { type: "text" }> => p.type === "text")
-    .map((p) => p.text)
-    .join("")
-    .trim();
+  const text = messageText(message).trim();
   if (!text) return "Message";
   return text.length > 42 ? `${text.slice(0, 41)}…` : text;
 }
 
-/**
- * Whether Restore should show for this user message: there is something after it to drop, and it is not an
- * in-flight latest turn still waiting for the first assistant part.
- */
-function canRestore(messages: readonly AgentMessage[], index: number, thinking: boolean): boolean {
-  const message = messages[index];
-  if (!message || message.role !== "user") return false;
-  if (index >= messages.length - 1) {
-    // sole trailing user message: only restore once a reply (or later turn) exists
-    return false;
-  }
-  // latest user turn while the assistant has not started answering yet
-  if (thinking && index === messages.length - 1) return false;
-  return true;
-}
+const CONFIRM_RESTORE = "Remove this turn and everything after";
 
 function Message({
   message,
-  stageIndex,
   restorable,
   confirming,
   onAskRestore,
@@ -60,8 +43,6 @@ function Message({
   onCancelRestore,
 }: {
   message: AgentMessage;
-  /** 1-based index when this is a user turn. */
-  stageIndex?: number;
   restorable?: boolean;
   confirming?: boolean;
   onAskRestore?: () => void;
@@ -70,8 +51,7 @@ function Message({
 }) {
   const visible = visibleParts(message);
   if (visible.length === 0) return null;
-  const user = message.role === "user";
-  const label = user ? stageLabel(message) : "";
+  const label = restorable ? stageLabel(message) : "";
   return (
     <div className="wa-chat__message" data-role={message.role} data-confirming={confirming || undefined}>
       <div className="wa-chat__message-body">
@@ -86,36 +66,33 @@ function Message({
           ) : null,
         )}
       </div>
-      {user && restorable && stageIndex != null && onAskRestore && (
+      {restorable && (
+        // icon-only: the tooltips (`title`) and accessible names carry the words
         <div className="wa-chat__stage">
           {confirming ? (
-            <div className="wa-chat__stage-confirm" role="group" aria-label={`Confirm restore to stage ${stageIndex}`}>
-              <p className="wa-chat__stage-prompt">Remove this turn and everything after?</p>
-              <div className="wa-chat__stage-actions">
-                <button
-                  type="button"
-                  className="wa-chat__stage-go"
-                  aria-label={`Confirm restore to stage ${stageIndex}`}
-                  title={`Restore to before: ${label}`}
-                  onClick={onConfirmRestore}
-                >
-                  Restore
-                </button>
-                <button type="button" className="wa-chat__stage-cancel" aria-label="Cancel restore" onClick={onCancelRestore}>
-                  Cancel
-                </button>
-              </div>
-            </div>
+            <fieldset className="wa-chat__stage-actions" aria-label={`${CONFIRM_RESTORE}?`}>
+              <button
+                type="button"
+                className="wa-chat__stage-go"
+                aria-label={CONFIRM_RESTORE}
+                title={CONFIRM_RESTORE}
+                onClick={onConfirmRestore}
+              >
+                <CheckIcon />
+              </button>
+              <button type="button" className="wa-chat__stage-cancel" aria-label="Cancel" title="Cancel" onClick={onCancelRestore}>
+                <CancelIcon />
+              </button>
+            </fieldset>
           ) : (
             <button
               type="button"
               className="wa-chat__stage-ask"
-              aria-label={`Restore to stage ${stageIndex}: ${label}`}
+              aria-label={`Restore to before: ${label}`}
               title="Restore to before this message"
               onClick={onAskRestore}
             >
               <RestoreIcon />
-              Restore
             </button>
           )}
         </div>
@@ -140,14 +117,11 @@ export function MessageList({
   const [behind, setBehind] = useState(false);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
-  const stageIndexById = useMemo(() => {
-    const map = new Map<string, number>();
-    let n = 0;
-    for (const m of messages) {
-      if (m.role === "user") map.set(m.id, ++n);
-    }
-    return map;
-  }, [messages]);
+  /** The user messages a restore control shows under (`canRestoreTo`: never before a confirmed action). */
+  const restorable = useMemo(
+    () => new Set(onRestore ? messages.filter((m) => canRestoreTo(messages, m.id)).map((m) => m.id) : []),
+    [messages, onRestore],
+  );
 
   // Follow new content only while the person is at the bottom; otherwise offer a way back.
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs on every new part or state change
@@ -163,8 +137,8 @@ export function MessageList({
   }, [pinned]);
 
   useEffect(() => {
-    if (confirmingId && !stageIndexById.has(confirmingId)) setConfirmingId(null);
-  }, [confirmingId, stageIndexById]);
+    if (confirmingId && !restorable.has(confirmingId)) setConfirmingId(null);
+  }, [confirmingId, restorable]);
 
   return (
     <div className="wa-chat__scroll">
@@ -180,26 +154,24 @@ export function MessageList({
           setPinned(el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM);
         }}
       >
-        {messages.map((m, i) => {
-          const stageIndex = onRestore ? stageIndexById.get(m.id) : undefined;
-          const restorable = stageIndex != null && canRestore(messages, i, thinking);
+        {messages.map((m) => {
+          const canRestore = restorable.has(m.id);
           return (
             <Message
               key={m.id}
               message={m}
-              stageIndex={stageIndex}
-              restorable={restorable}
+              restorable={canRestore}
               confirming={confirmingId === m.id}
-              onAskRestore={restorable ? () => setConfirmingId(m.id) : undefined}
+              onAskRestore={canRestore ? () => setConfirmingId(m.id) : undefined}
               onConfirmRestore={
-                restorable
+                canRestore
                   ? () => {
                       setConfirmingId(null);
                       onRestore?.(m.id);
                     }
                   : undefined
               }
-              onCancelRestore={restorable ? () => setConfirmingId(null) : undefined}
+              onCancelRestore={canRestore ? () => setConfirmingId(null) : undefined}
             />
           );
         })}

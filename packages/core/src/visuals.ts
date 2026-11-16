@@ -717,7 +717,8 @@ function start({
         const seen = await go(run, field);
         if (step.done) continue; // the gate gave up waiting and the tool wrote it itself
         // A password is typed like any value, but never read out or handed to listeners.
-        const value = (field as HTMLInputElement).type === "password" ? "••••" : to;
+        const secret = (field as HTMLInputElement).type === "password";
+        const value = secret ? "••••" : to;
         if (seen) {
           agentCursor.highlight(field);
           agentCursor.say(`${spoken(toolName)}: ${name} = ${JSON.stringify(value)}`);
@@ -728,7 +729,8 @@ function start({
           const from = step.from ?? fieldValue(field);
           if (sync) await (seen ? typeInto(field, to, from, !!steps) : writeField(field, to, !!steps));
           if (seen) agentCursor.flash();
-          report({ type: "fill", tool: toolName, field: name, value, from, control: field });
+          // no `from` for a password either: the previous one must not reach listeners (restore leaves it as is)
+          report({ type: "fill", tool: toolName, field: name, value, from: secret ? undefined : from, control: field });
         }
         if (seen) await wait(isControl(field) ? 60 : 300);
       }

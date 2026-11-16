@@ -31,7 +31,7 @@ export { useWebAgent } from "./session/use-web-agent";
 export type { UseWebAgentOptions, WebAgentHandle, WebAgentStatus } from "./session/use-web-agent";
 export { useAgentSession } from "./session/use-agent-session";
 export type { AgentSession, UseAgentSessionOptions } from "./session/use-agent-session";
-export { resumable, sessionReducer } from "./session/reducer";
+export { canRestoreTo, resumable, sessionReducer } from "./session/reducer";
 export type { SessionAction, SessionError, SessionState } from "./session/reducer";
 export type { RestoreResult } from "./session/restore-journal";
 export type { ChatRestoreSnapshot, ChatRestoreSnapshots } from "./session/restore-snapshot";

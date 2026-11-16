@@ -16,7 +16,8 @@ export type AgentEvent =
   /**
    * The agent's value went into a field: one of a declarative form, or the field a tool's parameter is typed into
    * (`field` is the control's `name` for a form, the parameter's name for a tool). Emitted once the cursor has typed it.
-   * `from` / `control` let chat restore put the prior value back (in-memory only; not serializable).
+   * `from` / `control` let chat restore put the prior value back (in-memory only; not serializable). A password
+   * field has no `from`: its previous value never reaches listeners, so restore leaves it as it is.
    */
   | { type: "fill"; tool: string; field: string; value: FieldValue; from?: FieldValue; control?: FieldControl }
   /** The tool is waiting for the user (the browser paused on a submit button, or the page asked them something). */

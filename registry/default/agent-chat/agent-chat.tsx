@@ -8,8 +8,8 @@
  * The code is yours: restyle or rearrange it like any shadcn component.
  */
 import { type AgentChatState, createCloudAdapter, type UseAgentChatOptions, useAgentChat } from "@webmcp-agents/chat";
-import { MessageSquareIcon, PlusIcon, SendIcon, SquareIcon, Undo2Icon, XIcon } from "lucide-react";
-import { type FormEvent, type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import { CheckIcon, MessageSquareIcon, PlusIcon, SendIcon, SquareIcon, Undo2Icon, XIcon } from "lucide-react";
+import { type FormEvent, type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,8 @@ import { AgentSubagent } from "@/components/web-agents/agent-subagent";
 import { AgentTool } from "@/components/web-agents/agent-tool";
 
 const DEFAULT_ADAPTERS = [createCloudAdapter()];
+/** The restore confirm button's name and tooltip. */
+const CONFIRM_RESTORE = "Remove this turn and everything after";
 
 export interface AgentChatBlockProps extends Partial<UseAgentChatOptions> {
   title?: string;
@@ -132,15 +134,8 @@ export function AgentChatBlock({
   const [restoreId, setRestoreId] = useState<string | null>(null);
   const [restoredNote, setRestoredNote] = useState(false);
   const restoredTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const restoring = useRef(false);
   const inputId = useId();
-  const stageIndexById = useMemo(() => {
-    const map = new Map<string, number>();
-    let n = 0;
-    for (const m of chat.messages) {
-      if (m.role === "user") map.set(m.id, ++n);
-    }
-    return map;
-  }, [chat.messages]);
   const busy = chat.status === "submitted" || chat.status === "streaming";
   const unavailable =
     chat.adapterStatus.state === "unavailable"
@@ -173,7 +168,8 @@ export function AgentChatBlock({
   }
   function submit(e?: FormEvent) {
     e?.preventDefault();
-    if (busy || unavailable || !text.trim()) return;
+    // while a restore is under way nothing is sent: keep the text (the restored message is put before it)
+    if (busy || unavailable || restoring.current || !text.trim()) return;
     clearRestoredNote();
     chat.sendMessage({ text });
     setText("");
@@ -188,13 +184,6 @@ export function AgentChatBlock({
       .trim();
     if (!text) return "Message";
     return text.length > 42 ? `${text.slice(0, 41)}…` : text;
-  }
-  function canRestore(index: number): boolean {
-    const m = chat.messages[index];
-    if (!m || m.role !== "user") return false;
-    if (index >= chat.messages.length - 1) return false;
-    if (busy && index === chat.messages.length - 1) return false;
-    return true;
   }
 
   if (!open) {
@@ -255,10 +244,9 @@ export function AgentChatBlock({
                   <AdapterCard chat={chat} />
                 </div>
               )}
-              {chat.messages.map((m, i) => {
-                const stageIndex = stageIndexById.get(m.id);
-                const label = stageIndex != null ? stageLabel(m) : "";
-                const restorable = stageIndex != null && canRestore(i);
+              {chat.messages.map((m) => {
+                // never before a confirmed action (an order placed, a flight booked)
+                const restorable = chat.canRestore(m.id);
                 return (
                   <MessageScrollerItem key={m.id} messageId={m.id} scrollAnchor={m.role === "user"}>
                     <Message align={m.role === "user" ? "end" : "start"}>
@@ -268,58 +256,62 @@ export function AgentChatBlock({
                             <Bubble align="end">
                               <BubbleContent>{m.parts.map((p) => (p.type === "text" ? p.text : "")).join("")}</BubbleContent>
                             </Bubble>
-                            {restorable && (
-                              <div className="flex flex-col items-end gap-1">
-                                {restoreId === m.id ? (
-                                  <>
-                                    <p className="text-right text-xs text-muted-foreground">Remove this turn and everything after?</p>
-                                    <div className="flex items-center gap-1">
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="sm"
-                                        className="h-7 gap-1 px-2 text-xs text-destructive"
-                                        aria-label={`Confirm restore to stage ${stageIndex}`}
-                                        title={`Restore to before: ${label}`}
-                                        onClick={() => {
-                                          setRestoreId(null);
-                                          void chat.restore(m.id).then((result) => {
-                                            if (!result) return;
-                                            setText(result.restoredText);
-                                            showRestoredNote();
-                                          });
-                                        }}
-                                      >
-                                        Restore
-                                      </Button>
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="sm"
-                                        className="h-7 px-2 text-xs text-muted-foreground"
-                                        aria-label="Cancel restore"
-                                        onClick={() => setRestoreId(null)}
-                                      >
-                                        Cancel
-                                      </Button>
-                                    </div>
-                                  </>
-                                ) : (
+                            {/* icon-only: the tooltips (`title`) and accessible names carry the words */}
+                            {restorable &&
+                              (restoreId === m.id ? (
+                                <fieldset className="m-0 flex min-w-0 items-center gap-1 border-0 p-0" aria-label={`${CONFIRM_RESTORE}?`}>
                                   <Button
                                     type="button"
                                     variant="ghost"
-                                    size="sm"
-                                    className="h-7 gap-1 px-2 text-xs text-muted-foreground"
-                                    aria-label={`Restore to stage ${stageIndex}: ${label}`}
-                                    title="Restore to before this message"
-                                    onClick={() => setRestoreId(m.id)}
+                                    size="icon-xs"
+                                    className="text-destructive"
+                                    aria-label={CONFIRM_RESTORE}
+                                    title={CONFIRM_RESTORE}
+                                    onClick={() => {
+                                      setRestoreId(null);
+                                      restoring.current = true;
+                                      void chat
+                                        .restore(m.id)
+                                        .finally(() => {
+                                          restoring.current = false;
+                                        })
+                                        .then((result) => {
+                                          if (!result) return;
+                                          // keep a half-written message: the restored text goes first, the draft after it
+                                          setText((current) =>
+                                            current.trim() ? `${result.restoredText}\n\n${current}` : result.restoredText,
+                                          );
+                                          showRestoredNote();
+                                        });
+                                    }}
                                   >
-                                    <Undo2Icon className="size-3.5" />
-                                    Restore
+                                    <CheckIcon />
                                   </Button>
-                                )}
-                              </div>
-                            )}
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    className="text-muted-foreground"
+                                    aria-label="Cancel"
+                                    title="Cancel"
+                                    onClick={() => setRestoreId(null)}
+                                  >
+                                    <XIcon />
+                                  </Button>
+                                </fieldset>
+                              ) : (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  className="text-muted-foreground"
+                                  aria-label={`Restore to before: ${stageLabel(m)}`}
+                                  title="Restore to before this message"
+                                  onClick={() => setRestoreId(m.id)}
+                                >
+                                  <Undo2Icon />
+                                </Button>
+                              ))}
                           </div>
                         ) : (
                           <Parts message={m} chat={chat} />

@@ -9,7 +9,8 @@ export interface ComposerProps {
   /** Controlled draft (so restore can put the dropped user text back). */
   value: string;
   onChange(text: string): void;
-  onSend(text: string): void;
+  /** Return `false` when the text wasn't sent (a restore is under way): the composer keeps it. */
+  onSend(text: string): boolean;
   onStop(): void;
 }
 
@@ -19,8 +20,7 @@ export function Composer({ inputRef, streaming, unavailable, value, onChange, on
   function submit(e?: FormEvent) {
     e?.preventDefault();
     if (streaming || unavailable || !value.trim()) return;
-    onSend(value);
-    onChange("");
+    if (onSend(value)) onChange("");
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {

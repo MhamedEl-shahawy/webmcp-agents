@@ -1,15 +1,22 @@
 import { describe, expect, it } from "vitest";
 import type { AgentMessage } from "../src/types";
-import { doneToolsAfter, messageText, outputValue, RestoreJournal } from "../src/session/restore-journal";
+import { messageText, outputValue, RestoreJournal, toolsAfter } from "../src/session/restore-journal";
 
 describe("restore-journal", () => {
   it("messageText joins text parts", () => {
-    expect(messageText({ id: "u", role: "user", parts: [{ type: "text", text: "Hi" }, { type: "text", text: " there" }] })).toBe(
-      "Hi there",
-    );
+    expect(
+      messageText({
+        id: "u",
+        role: "user",
+        parts: [
+          { type: "text", text: "Hi" },
+          { type: "text", text: " there" },
+        ],
+      }),
+    ).toBe("Hi there");
   });
 
-  it("doneToolsAfter collects completed calls from the checkpoint onward, nested included", () => {
+  it("toolsAfter collects every call from the checkpoint onward, nested and unfinished included", () => {
     const messages: AgentMessage[] = [
       { id: "u0", role: "user", parts: [{ type: "text", text: "earlier" }] },
       {
@@ -54,7 +61,9 @@ describe("restore-journal", () => {
         ],
       },
     ];
-    expect(doneToolsAfter(messages, "u1").map((p) => p.id)).toEqual(["d1", "c1", "c3"]);
+    // a failed or cancelled call may have typed before it stopped: its fills rewind too
+    expect(toolsAfter(messages, "u1").map((p) => p.id)).toEqual(["d1", "c1", "c2", "c3"]);
+    expect(toolsAfter(messages, "missing")).toEqual([]);
   });
 
   it("outputValue parses JSON text when possible", () => {
