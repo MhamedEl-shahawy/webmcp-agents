@@ -7,6 +7,7 @@ import { AgentChat } from "../src/components/AgentChat";
 import { MessageList } from "../src/components/MessageList";
 import { ToolCallCard } from "../src/components/ToolCallCard";
 import { act } from "react";
+import { flushSync } from "react-dom";
 import type { AdapterStatus, AgentAdapter, AgentRunRequest, AgentStreamPart } from "../src/types";
 import { cleanupFixtures, echoForm, modelContext, uniqueName, until } from "./browser-utils";
 
@@ -186,8 +187,11 @@ describe("<AgentChat>", () => {
       yield { type: "finish", reason: "stop" };
     });
     const screen = await render(<AgentChat adapter={adapter} defaultOpen storageKey={false} />);
-    await userEvent.type(q<HTMLTextAreaElement>("textarea")!, "go{Enter}");
-    q<HTMLButtonElement>('[aria-label="Stop"]')!.click(); // at once, while the page's tools settle
+    await userEvent.type(q<HTMLTextAreaElement>("textarea")!, "go");
+    // send and Stop in one task: the run starts once the page's tools settle (~150 ms), which a slow runner's
+    // `userEvent.type("{Enter}")` round trip can outlast, so the run would already be over
+    flushSync(() => q<HTMLFormElement>(".wa-chat__composer")!.requestSubmit());
+    q<HTMLButtonElement>('[aria-label="Stop"]')!.click();
     await sleep(300);
     expect(started).toBe(false);
     expect(q('[aria-label="Send"]')).not.toBeNull();
