@@ -309,7 +309,12 @@ export function AgentChat({
           </div>
         ) : (
           <>
-            <MessageList messages={session.messages} thinking={thinking} onRestore={(id) => void restore(id)} />
+            <MessageList
+              messages={session.messages}
+              thinking={thinking}
+              busy={session.status === "streaming"}
+              onRestore={(id) => void restore(id)}
+            />
             {downloadCard}
           </>
         )}

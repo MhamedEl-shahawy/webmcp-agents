@@ -409,6 +409,40 @@ describe("<AgentChat>", () => {
     await screen.unmount();
   });
 
+  it("offers restore only once the run has ended, as a chip on the bubble's bottom edge", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const adapter = fakeAdapter(async function* () {
+      yield { type: "message-start", messageId: "a1" };
+      yield { type: "text-delta", messageId: "a1", delta: "Working on it" };
+      await gate;
+      yield { type: "finish", reason: "stop" };
+    });
+    const screen = await render(<AgentChat adapter={adapter} defaultOpen storageKey={false} />);
+    await userEvent.type(q<HTMLTextAreaElement>("textarea")!, "show black hoodies on sale in size M{Enter}");
+    await until(() => !!q('[data-role="assistant"]'), 2000, "streaming reply");
+    expect(q('[aria-label^="Restore to before: "]')).toBeNull();
+    release();
+    await until(() => !!q('[aria-label^="Restore to before: "]'), 2000, "restore after the run");
+    const bubble = q('[data-role="user"] .wa-chat__bubble')!.getBoundingClientRect();
+    const chip = q('[aria-label^="Restore to before: "]')!.getBoundingClientRect();
+    // half over the bubble, half below it, inset from its rounded corner
+    expect(Math.abs(chip.top + chip.height / 2 - bubble.bottom)).toBeLessThanOrEqual(1);
+    expect(chip.right).toBeLessThan(bubble.right);
+    expect(bubble.right - chip.right).toBeLessThanOrEqual(12);
+    // with a mouse: hidden until its message is hovered
+    if (matchMedia("(hover: hover)").matches) {
+      const ask = q('[aria-label^="Restore to before: "]')!;
+      await userEvent.hover(q('[data-role="assistant"]')!);
+      await until(() => getComputedStyle(ask).opacity === "0", 2000, "hidden off the message");
+      await userEvent.hover(q('[data-role="user"] .wa-chat__bubble')!);
+      await until(() => getComputedStyle(ask).opacity === "1", 2000, "shown on hover");
+    }
+    await screen.unmount();
+  });
+
   it("never offers a restore before a confirmed (destructive) call, only after it", async () => {
     const { defineWebTool, registerWebTool } = await import("@webmcp-agents/core");
     const id = uniqueName("delete_all");

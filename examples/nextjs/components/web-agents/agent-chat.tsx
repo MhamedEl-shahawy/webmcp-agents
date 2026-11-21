@@ -245,26 +245,33 @@ export function AgentChatBlock({
                 </div>
               )}
               {chat.messages.map((m) => {
-                // never before a confirmed action (an order placed, a flight booked)
-                const restorable = chat.canRestore(m.id);
+                // never before a confirmed action (an order placed, a flight booked), nor while a run is under way
+                const restorable = !busy && chat.canRestore(m.id);
                 return (
                   <MessageScrollerItem key={m.id} messageId={m.id} scrollAnchor={m.role === "user"}>
                     <Message align={m.role === "user" ? "end" : "start"}>
                       <MessageContent>
                         {m.role === "user" ? (
-                          <div className="flex flex-col items-end gap-1">
+                          <div className="group/turn flex flex-col items-end gap-1">
                             <Bubble align="end">
-                              <BubbleContent>{m.parts.map((p) => (p.type === "text" ? p.text : "")).join("")}</BubbleContent>
+                              {/* room for the restore chip's top half, so it only covers padding, never text */}
+                              <BubbleContent className={restorable ? "pb-3.5" : undefined}>
+                                {m.parts.map((p) => (p.type === "text" ? p.text : "")).join("")}
+                              </BubbleContent>
                             </Bubble>
-                            {/* icon-only: the tooltips (`title`) and accessible names carry the words */}
+                            {/* icon-only: the tooltips (`title`) and accessible names carry the words. -mt-4 = the 4px gap +
+                                half the 24px chip, so it sits half over the bubble's bottom edge. */}
                             {restorable &&
                               (restoreId === m.id ? (
-                                <fieldset className="m-0 flex min-w-0 items-center gap-1 border-0 p-0" aria-label={`${CONFIRM_RESTORE}?`}>
+                                <fieldset
+                                  className="relative -mt-4 me-2.5 flex min-w-0 items-center gap-0.5 rounded-full border-0 bg-background px-0.5 shadow-xs ring-1 ring-border"
+                                  aria-label={`${CONFIRM_RESTORE}?`}
+                                >
                                   <Button
                                     type="button"
                                     variant="ghost"
                                     size="icon-xs"
-                                    className="text-destructive"
+                                    className="rounded-full text-destructive"
                                     aria-label={CONFIRM_RESTORE}
                                     title={CONFIRM_RESTORE}
                                     onClick={() => {
@@ -291,7 +298,7 @@ export function AgentChatBlock({
                                     type="button"
                                     variant="ghost"
                                     size="icon-xs"
-                                    className="text-muted-foreground"
+                                    className="rounded-full text-muted-foreground"
                                     aria-label="Cancel"
                                     title="Cancel"
                                     onClick={() => setRestoreId(null)}
@@ -304,7 +311,9 @@ export function AgentChatBlock({
                                   type="button"
                                   variant="ghost"
                                   size="icon-xs"
-                                  className="text-muted-foreground"
+                                  // a chip half over the bubble's bottom edge; with a mouse, only while the message is hovered or the button has
+                                  // focus (always on touch)
+                                  className="relative -mt-4 me-2.5 rounded-full bg-background text-muted-foreground shadow-xs ring-1 ring-border transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/turn:opacity-100 focus-visible:opacity-100"
                                   aria-label={`Restore to before: ${stageLabel(m)}`}
                                   title="Restore to before this message"
                                   onClick={() => setRestoreId(m.id)}

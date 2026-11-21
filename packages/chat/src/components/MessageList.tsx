@@ -65,38 +65,38 @@ function Message({
             </div>
           ) : null,
         )}
-      </div>
-      {restorable && (
-        // icon-only: the tooltips (`title`) and accessible names carry the words
-        <div className="wa-chat__stage">
-          {confirming ? (
-            <fieldset className="wa-chat__stage-actions" aria-label={`${CONFIRM_RESTORE}?`}>
+        {restorable && (
+          // icon-only: the tooltips (`title`) and accessible names carry the words
+          <div className="wa-chat__stage">
+            {confirming ? (
+              <fieldset className="wa-chat__stage-actions" aria-label={`${CONFIRM_RESTORE}?`}>
+                <button
+                  type="button"
+                  className="wa-chat__stage-go"
+                  aria-label={CONFIRM_RESTORE}
+                  title={CONFIRM_RESTORE}
+                  onClick={onConfirmRestore}
+                >
+                  <CheckIcon />
+                </button>
+                <button type="button" className="wa-chat__stage-cancel" aria-label="Cancel" title="Cancel" onClick={onCancelRestore}>
+                  <CancelIcon />
+                </button>
+              </fieldset>
+            ) : (
               <button
                 type="button"
-                className="wa-chat__stage-go"
-                aria-label={CONFIRM_RESTORE}
-                title={CONFIRM_RESTORE}
-                onClick={onConfirmRestore}
+                className="wa-chat__stage-ask"
+                aria-label={`Restore to before: ${label}`}
+                title="Restore to before this message"
+                onClick={onAskRestore}
               >
-                <CheckIcon />
+                <RestoreIcon />
               </button>
-              <button type="button" className="wa-chat__stage-cancel" aria-label="Cancel" title="Cancel" onClick={onCancelRestore}>
-                <CancelIcon />
-              </button>
-            </fieldset>
-          ) : (
-            <button
-              type="button"
-              className="wa-chat__stage-ask"
-              aria-label={`Restore to before: ${label}`}
-              title="Restore to before this message"
-              onClick={onAskRestore}
-            >
-              <RestoreIcon />
-            </button>
-          )}
-        </div>
-      )}
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -106,10 +106,13 @@ const NEAR_BOTTOM = 48;
 export function MessageList({
   messages,
   thinking,
+  busy = false,
   onRestore,
 }: {
   messages: AgentMessage[];
   thinking: boolean;
+  /** A run is under way (sending, streaming, calling tools): no restore control shows until it ends. */
+  busy?: boolean;
   onRestore?: (messageId: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -117,10 +120,13 @@ export function MessageList({
   const [behind, setBehind] = useState(false);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
-  /** The user messages a restore control shows under (`canRestoreTo`: never before a confirmed action). */
+  /**
+   * The user messages a restore control shows under (`canRestoreTo`: never before a confirmed action). None while a run
+   * is under way: the turn is still changing, and a restore would stop it mid-step.
+   */
   const restorable = useMemo(
-    () => new Set(onRestore ? messages.filter((m) => canRestoreTo(messages, m.id)).map((m) => m.id) : []),
-    [messages, onRestore],
+    () => new Set(onRestore && !busy ? messages.filter((m) => canRestoreTo(messages, m.id)).map((m) => m.id) : []),
+    [messages, onRestore, busy],
   );
 
   // Follow new content only while the person is at the bottom; otherwise offer a way back.
